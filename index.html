@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A pixel trail behind the hero · Interaction recipes</title>
+<meta name="description" content="A pointer charged grid of squares that holds the shape of your trail and never draws over the text. A recipe by Miguel Clavel.">
+<style>
+  :root { --page: #F9F9FB; --ink: #33333A; --muted: #67676C; }
+  @media (prefers-color-scheme: dark) { :root { --page: #0F0F11; --ink: #F5F5F7; --muted: #A3A3A8; } }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--page); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; overflow: hidden; }
+  .hero { position: relative; height: 100%; display: grid; place-items: center; touch-action: none; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+  .copy { position: relative; text-align: center; padding: 0 24px; pointer-events: none; }
+  .copy h1 { margin: 0; font-size: clamp(44px, 9vw, 112px); font-weight: 750; letter-spacing: -0.045em; line-height: 1; }
+  .copy p { margin: 14px 0 0; font-size: clamp(15px, 2vw, 19px); color: var(--muted); }
+  .hint { position: fixed; left: 0; right: 0; bottom: 20px; text-align: center; font-size: 13px; color: var(--muted); }
+  .hint a { color: inherit; }
+  body.embed .hint { display: none; }
+</style>
+</head>
+<body>
+<section class="hero" id="hero">
+  <canvas id="grid" aria-hidden="true"></canvas>
+  <div class="copy" id="copy">
+    <h1>Miguel Clavel</h1>
+    <p>Draw circles around me.</p>
+  </div>
+</section>
+<p class="hint">Move your mouse (or drag a finger) around the name. <a href="https://github.com/miguelclavel/pixel-trail">Code and prompt</a></p>
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.has('embed')) document.body.classList.add('embed');
+  const HOLD = params.has('demo');   // the README picture keeps its trail instead of fading
+
+  const COLS = 102;          // grid width in squares
+  const RADIUS = 60;         // how far from the pointer a square gets charged, in px
+  const ACCENTS = ['#FFD84D', '#FF4D6D', '#5BE85B', '#33D6FF'];
+  const hero = document.getElementById('hero');
+  const cv = document.getElementById('grid');
+  const copy = document.getElementById('copy');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const seed = Math.random() * 1000;
+  const hash = (x, y, s) => { const n = Math.sin(x * 127.1 + y * 311.7 + s * 74.7 + seed) * 43758.5453; return n - Math.floor(n); };
+  const pick = (c, r, k) => ACCENTS[Math.floor(hash(c, r, k) * ACCENTS.length) % ACCENTS.length];
+  const P = { x: -1, y: -1, tx: -1, ty: -1, on: false, moved: 0, last: 0, grid: null, rows: 0, req: null, w: 0, h: 0, dpr: 1 };
+
+  function size() {
+    const b = hero.getBoundingClientRect();
+    P.dpr = Math.min(2, devicePixelRatio || 1);
+    cv.width = Math.round(b.width * P.dpr); cv.height = Math.round(b.height * P.dpr);
+    P.w = b.width; P.h = b.height;
+    // Resizing a canvas clears it, so paint the current trail again.
+    if (P.grid && !P.req) P.req = requestAnimationFrame(draw);
+  }
+
+  function draw() {
+    P.req = null;
+    const ctx = cv.getContext('2d');
+    const cell = P.w / COLS, rows = Math.ceil(P.h / cell);
+    if (!P.grid || P.rows !== rows) {
+      // Keep the trail when the height changes: copy the rows that still fit.
+      const next = new Float32Array(COLS * rows);
+      if (P.grid) next.set(P.grid.subarray(0, Math.min(P.grid.length, next.length)));
+      P.grid = next; P.rows = rows;
+    }
+    const E = P.grid, now = performance.now();
+    const dt = Math.min(50, now - (P.last || now)) / 1000;
+    P.last = now;
+    // Ease the drawing point toward the real pointer so fast moves still leave a solid trail.
+    if (P.tx >= 0) { if (P.x < 0) { P.x = P.tx; P.y = P.ty; } P.x += (P.tx - P.x) * 0.22; P.y += (P.ty - P.y) * 0.22; }
+    // Fade slowly, twice as fast once the pointer has been still for half a second.
+    const idle = now - P.moved > 500;
+    const decay = HOLD ? 0 : 0.64 * dt * (idle ? 2.2 : 1);
+    const rc = RADIUS / cell, cx = P.x / cell, cy = P.y / cell;
+    const ink = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim();
+
+    // Never draw over the text. Blocking the charge is not enough: the radius
+    // reaches in from outside, so the squares under the copy are skipped outright.
+    const hb = hero.getBoundingClientRect(), q = copy.getBoundingClientRect(), pad = 18;
+    const keep = { l: q.left - hb.left - pad, r: q.right - hb.left + pad, t: q.top - hb.top - pad, b: q.bottom - hb.top + pad };
+
+    ctx.setTransform(P.dpr, 0, 0, P.dpr, 0, 0);
+    ctx.clearRect(0, 0, P.w, P.h);
+    let any = false;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const i = r * COLS + c;
+        let e = Math.max(0, E[i] - decay);
+        if (P.on && !idle && P.x >= 0) {
+          const dx = c + 0.5 - cx, dy = r + 0.5 - cy, d = Math.sqrt(dx * dx + dy * dy);
+          if (d < rc) {
+            const charge = 1 - d / rc, target = charge * charge * (0.55 + 0.45 * charge);
+            // Each square keeps the brightest it has been, so the trail holds its shape.
+            if (target > e) e = target;
+          }
+        }
+        E[i] = e;
+        if (e <= 0.06) continue;
+        any = true;
+        let fill;
+        if (e > 0.55) fill = ink;
+        else if (e > 0.40) fill = hash(c, r, 17) < 0.3 ? pick(c, r, 19) : ink;
+        else if (e > 0.24) fill = pick(c, r, 23);
+        else if (hash(c, r, 31) < 0.3) fill = pick(c, r, 29);
+        else continue;
+        const px = c * cell, py = r * cell;
+        if (px + cell > keep.l && px < keep.r && py + cell > keep.t && py < keep.b) continue;
+        ctx.fillStyle = fill;
+        ctx.fillRect(px, py, cell + 1, cell + 1);
+      }
+    }
+    if (any) P.req = requestAnimationFrame(draw);
+  }
+
+  function point(x, y) {
+    const b = hero.getBoundingClientRect();
+    P.tx = x - b.left; P.ty = y - b.top; P.on = true; P.moved = performance.now();
+    if (!P.req) P.req = requestAnimationFrame(draw);
+  }
+
+  size();
+  addEventListener('resize', size, { passive: true });
+  if (!reduce) {
+    hero.addEventListener('pointermove', e => point(e.clientX, e.clientY), { passive: true });
+    hero.addEventListener('pointerleave', () => { P.on = false; }, { passive: true });
+  }
+
+  // ?demo charges a loop around the name in one go and holds it, for the README picture.
+  if (params.has('demo')) setTimeout(() => {
+    size();
+    const b = hero.getBoundingClientRect(), cell = b.width / COLS, rows = Math.ceil(b.height / cell);
+    P.grid = new Float32Array(COLS * rows); P.rows = rows;
+    for (let k = 0; k <= 900; k++) {
+      const a = (k / 900) * Math.PI * 2.15 - 0.6;
+      const x = b.width * (0.5 + 0.4 * Math.cos(a)), y = b.height * (0.5 + 0.34 * Math.sin(a));
+      const fade = 0.35 + 0.65 * (k / 900);   // older parts of the loop are dimmer
+      for (let r = 0; r < rows; r++) for (let c = 0; c < COLS; c++) {
+        const d = Math.hypot(c + 0.5 - x / cell, r + 0.5 - y / cell), rc = RADIUS / cell;
+        if (d < rc) { const ch = 1 - d / rc, t = ch * ch * (0.55 + 0.45 * ch) * fade; if (t > P.grid[r * COLS + c]) P.grid[r * COLS + c] = t; }
+      }
+    }
+    P.last = performance.now(); P.moved = P.last;
+    draw();
+    cancelAnimationFrame(P.req); P.req = null;
+  }, 300);
+</script>
+</body>
+</html>
