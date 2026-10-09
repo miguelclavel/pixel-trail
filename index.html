@@ -22,14 +22,14 @@
 </style>
 </head>
 <body>
-<section class="hero" id="hero">
+<main class="hero" id="hero">
   <canvas id="grid" aria-hidden="true"></canvas>
   <div class="copy" id="copy">
     <h1>Miguel Clavel</h1>
     <p>Draw circles around me.</p>
   </div>
-</section>
-<p class="hint">Move your mouse (or drag a finger) around the name. <a href="https://github.com/miguelclavel/pixel-trail">Code and prompt</a></p>
+</main>
+<footer><p class="hint">Move your mouse (or drag a finger) around the name. <a href="https://github.com/miguelclavel/pixel-trail">Code and prompt</a></p></footer>
 <script>
   const params = new URLSearchParams(location.search);
   if (params.has('embed')) document.body.classList.add('embed');
